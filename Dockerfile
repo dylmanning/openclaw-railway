@@ -11,6 +11,46 @@ RUN if [ "$OPENCLAW_INSTALL_TAILSCALE" = "1" ]; then \
   curl -fsSL https://tailscale.com/install.sh | sh; \
   fi
 
+# Optional Signal CLI install (enabled by default for Signal channel support).
+ARG OPENCLAW_INSTALL_SIGNAL_CLI="1"
+ARG OPENCLAW_SIGNAL_CLI_VERSION=""
+RUN if [ "$OPENCLAW_INSTALL_SIGNAL_CLI" = "1" ]; then \
+  set -eu; \
+  if [ "$(dpkg --print-architecture)" != "amd64" ]; then \
+  echo "signal-cli native install in this template currently supports amd64 only"; \
+  exit 1; \
+  fi; \
+  SIGNAL_VERSION="$OPENCLAW_SIGNAL_CLI_VERSION"; \
+  if [ -z "$SIGNAL_VERSION" ]; then \
+  SIGNAL_VERSION="$(curl -Ls -o /dev/null -w '%{url_effective}' https://github.com/AsamK/signal-cli/releases/latest | sed -e 's#^.*/v##')"; \
+  fi; \
+  curl -fsSL "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_VERSION}/signal-cli-${SIGNAL_VERSION}-Linux-native.tar.gz" -o /tmp/signal-cli.tar.gz; \
+  tar -xzf /tmp/signal-cli.tar.gz -C /opt; \
+  rm -f /tmp/signal-cli.tar.gz; \
+  SIGNAL_DIR="$(find /opt -maxdepth 1 -type d -name 'signal-cli*' | sort | tail -n 1)"; \
+  if [ -z "$SIGNAL_DIR" ]; then \
+  echo "signal-cli archive extracted but install directory was not found"; \
+  exit 1; \
+  fi; \
+  if [ -x "$SIGNAL_DIR/bin/signal-cli" ]; then \
+  ln -sf "$SIGNAL_DIR/bin/signal-cli" /usr/local/bin/signal-cli-bin; \
+  elif [ -x "$SIGNAL_DIR/signal-cli" ]; then \
+  ln -sf "$SIGNAL_DIR/signal-cli" /usr/local/bin/signal-cli-bin; \
+  else \
+  echo "signal-cli binary not found in $SIGNAL_DIR"; \
+  exit 1; \
+  fi; \
+  printf '%s\n' \
+  '#!/bin/sh' \
+  'set -eu' \
+  ': "${SIGNAL_CLI_HOME:=/data}"' \
+  'export HOME="$SIGNAL_CLI_HOME"' \
+  'exec /usr/local/bin/signal-cli-bin "$@"' \
+  > /usr/local/bin/signal-cli; \
+  chmod +x /usr/local/bin/signal-cli; \
+  signal-cli --version; \
+  fi
+
 # Optional system packages to bake at build time.
 # Example: --build-arg OPENCLAW_DOCKER_APT_PACKAGES="ffmpeg jq"
 ARG OPENCLAW_DOCKER_APT_PACKAGES=""
@@ -51,6 +91,7 @@ ENV OPENCLAW_CONFIG_PATH=/data/.openclaw/openclaw.json
 ENV OPENCLAW_PLUGIN_STAGE_DIR=/data/plugin-runtime-deps
 ENV TAILSCALE_STATE_DIR=/data/tailscale
 ENV TAILSCALE_SOCKET=/var/run/tailscale/tailscaled.sock
+ENV SIGNAL_CLI_HOME=/data
 # Optional comma-separated origins (for custom domains).
 # If unset, startup falls back to https://${RAILWAY_PUBLIC_DOMAIN} when available.
 ENV OPENCLAW_CONTROL_UI_ALLOWED_ORIGINS=""
@@ -61,7 +102,7 @@ COPY <<'EOF' /usr/local/bin/start-railway.sh
 #!/bin/sh
 set -eu
 
-mkdir -p "$OPENCLAW_STATE_DIR" "$OPENCLAW_WORKSPACE_DIR" "$OPENCLAW_PLUGIN_STAGE_DIR" "$TAILSCALE_STATE_DIR" /var/run/tailscale
+mkdir -p "$OPENCLAW_STATE_DIR" "$OPENCLAW_WORKSPACE_DIR" "$OPENCLAW_PLUGIN_STAGE_DIR" "$TAILSCALE_STATE_DIR" "$SIGNAL_CLI_HOME/.local/share/signal-cli" /var/run/tailscale
 
 # Start tailscaled in userspace mode when available.
 if command -v tailscaled >/dev/null 2>&1; then
