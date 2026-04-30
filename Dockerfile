@@ -25,21 +25,17 @@ RUN if [ "$OPENCLAW_INSTALL_SIGNAL_CLI" = "1" ]; then \
   SIGNAL_VERSION="$(curl -Ls -o /dev/null -w '%{url_effective}' https://github.com/AsamK/signal-cli/releases/latest | sed -e 's#^.*/v##')"; \
   fi; \
   curl -fsSL "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_VERSION}/signal-cli-${SIGNAL_VERSION}-Linux-native.tar.gz" -o /tmp/signal-cli.tar.gz; \
-  tar -xzf /tmp/signal-cli.tar.gz -C /opt; \
+  rm -rf /tmp/signal-cli-extract; \
+  mkdir -p /tmp/signal-cli-extract; \
+  tar -xzf /tmp/signal-cli.tar.gz -C /tmp/signal-cli-extract; \
   rm -f /tmp/signal-cli.tar.gz; \
-  SIGNAL_DIR="$(find /opt -maxdepth 1 -type d -name 'signal-cli*' | sort | tail -n 1)"; \
-  if [ -z "$SIGNAL_DIR" ]; then \
-  echo "signal-cli archive extracted but install directory was not found"; \
+  SIGNAL_BIN="$(find /tmp/signal-cli-extract -type f -name 'signal-cli' | sort | head -n 1)"; \
+  if [ -z "$SIGNAL_BIN" ]; then \
+  echo "signal-cli binary not found in extracted archive"; \
   exit 1; \
   fi; \
-  if [ -x "$SIGNAL_DIR/bin/signal-cli" ]; then \
-  ln -sf "$SIGNAL_DIR/bin/signal-cli" /usr/local/bin/signal-cli-bin; \
-  elif [ -x "$SIGNAL_DIR/signal-cli" ]; then \
-  ln -sf "$SIGNAL_DIR/signal-cli" /usr/local/bin/signal-cli-bin; \
-  else \
-  echo "signal-cli binary not found in $SIGNAL_DIR"; \
-  exit 1; \
-  fi; \
+  install -m 0755 "$SIGNAL_BIN" /usr/local/bin/signal-cli-bin; \
+  rm -rf /tmp/signal-cli-extract; \
   printf '%s\n' \
   '#!/bin/sh' \
   'set -eu' \
