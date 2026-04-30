@@ -31,16 +31,16 @@ ARG OPENCLAW_GOPLACES_URL=""
 ARG OPENCLAW_WACLI_URL=""
 RUN set -eu; \
   if [ -n "$OPENCLAW_GOGCLI_URL" ]; then \
-    curl -fsSL "$OPENCLAW_GOGCLI_URL" | tar -xzO gog > /usr/local/bin/gog; \
-    chmod +x /usr/local/bin/gog; \
+  curl -fsSL "$OPENCLAW_GOGCLI_URL" | tar -xzO gog > /usr/local/bin/gog; \
+  chmod +x /usr/local/bin/gog; \
   fi; \
   if [ -n "$OPENCLAW_GOPLACES_URL" ]; then \
-    curl -fsSL "$OPENCLAW_GOPLACES_URL" | tar -xzO goplaces > /usr/local/bin/goplaces; \
-    chmod +x /usr/local/bin/goplaces; \
+  curl -fsSL "$OPENCLAW_GOPLACES_URL" | tar -xzO goplaces > /usr/local/bin/goplaces; \
+  chmod +x /usr/local/bin/goplaces; \
   fi; \
   if [ -n "$OPENCLAW_WACLI_URL" ]; then \
-    curl -fsSL "$OPENCLAW_WACLI_URL" | tar -xzO wacli > /usr/local/bin/wacli; \
-    chmod +x /usr/local/bin/wacli; \
+  curl -fsSL "$OPENCLAW_WACLI_URL" | tar -xzO wacli > /usr/local/bin/wacli; \
+  chmod +x /usr/local/bin/wacli; \
   fi
 
 # Railway runtime defaults: keep container stateless; persist everything under /data.
@@ -51,6 +51,9 @@ ENV OPENCLAW_CONFIG_PATH=/data/.openclaw/openclaw.json
 ENV OPENCLAW_PLUGIN_STAGE_DIR=/data/plugin-runtime-deps
 ENV TAILSCALE_STATE_DIR=/data/tailscale
 ENV TAILSCALE_SOCKET=/var/run/tailscale/tailscaled.sock
+# Optional comma-separated origins (for custom domains).
+# If unset, startup falls back to https://${RAILWAY_PUBLIC_DOMAIN} when available.
+ENV OPENCLAW_CONTROL_UI_ALLOWED_ORIGINS=""
 ENV OPENCLAW_DISABLE_BONJOUR=1
 ENV NODE_ENV=production
 
@@ -89,6 +92,24 @@ if command -v tailscaled >/dev/null 2>&1; then
   fi
 
   tailscale --socket="$TAILSCALE_SOCKET" status || true
+fi
+
+# Configure allowed Control UI origins for reverse-proxied Railway domains.
+# Accepts comma-separated origins/domains and auto-normalizes ws:// and wss:// entries.
+ORIGINS_JSON="$(
+  ALLOWED_ORIGINS="${OPENCLAW_CONTROL_UI_ALLOWED_ORIGINS:-}" \
+  RAILWAY_PUBLIC_DOMAIN="${RAILWAY_PUBLIC_DOMAIN:-}" \
+  node -e 'const raw = (process.env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean); const normalized = []; for (const value of raw) { if (value === "*") { normalized.push("*"); continue; } let candidate = value; if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)) candidate = `https://${candidate}`; try { const url = new URL(candidate); if (url.protocol === "ws:") url.protocol = "http:"; if (url.protocol === "wss:") url.protocol = "https:"; normalized.push(url.origin.toLowerCase()); } catch { normalized.push(value); } } const deduped = [...new Set(normalized)]; const publicDomain = (process.env.RAILWAY_PUBLIC_DOMAIN || "").trim().toLowerCase(); if (deduped.length === 0 && publicDomain) { deduped.push(`https://${publicDomain}`); } process.stdout.write(JSON.stringify(deduped));'
+)"
+
+if [ "$ORIGINS_JSON" != "[]" ]; then
+  echo "Configuring gateway.controlUi.allowedOrigins=$ORIGINS_JSON"
+  if ! openclaw config set --batch-json "[{\"path\":\"gateway.controlUi.allowedOrigins\",\"value\":$ORIGINS_JSON}]"; then
+    echo "Warning: failed to persist gateway.controlUi.allowedOrigins"
+  fi
+  openclaw config get gateway.controlUi.allowedOrigins --json || true
+else
+  echo "Warning: no Control UI allowed origins resolved; set OPENCLAW_CONTROL_UI_ALLOWED_ORIGINS or enable Railway Public Networking."
 fi
 
 exec node /app/openclaw.mjs gateway --allow-unconfigured --bind lan --port "${OPENCLAW_GATEWAY_PORT:-8080}"
