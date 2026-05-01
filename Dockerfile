@@ -26,6 +26,20 @@ RUN if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
   rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
   fi
 
+# Optional Linuxbrew install for onboarding flows that expect brew.
+# Enabled by default; disable with: --build-arg OPENCLAW_INSTALL_BREW=""
+ARG OPENCLAW_INSTALL_BREW="1"
+RUN if [ -n "$OPENCLAW_INSTALL_BREW" ]; then \
+  apt-get update && \
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential procps curl file git ca-certificates && \
+  su -s /bin/sh node -c 'git clone --depth=1 https://github.com/Homebrew/brew /home/node/.linuxbrew/Homebrew && mkdir -p /home/node/.linuxbrew/bin && ln -sf ../Homebrew/bin/brew /home/node/.linuxbrew/bin/brew && /home/node/.linuxbrew/bin/brew update --force --quiet' && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+  fi
+ENV PATH=/home/node/.linuxbrew/bin:/home/node/.linuxbrew/sbin:$PATH
+ENV HOMEBREW_NO_AUTO_UPDATE=1
+ENV HOMEBREW_NO_ANALYTICS=1
+
 # Optional system packages to bake at build time.
 # Example: --build-arg OPENCLAW_DOCKER_APT_PACKAGES="ffmpeg jq"
 ARG OPENCLAW_DOCKER_APT_PACKAGES=""
@@ -132,7 +146,15 @@ else
   echo "Warning: no Control UI allowed origins resolved; set OPENCLAW_CONTROL_UI_ALLOWED_ORIGINS or enable Railway Public Networking."
 fi
 
-exec node /app/openclaw.mjs gateway --allow-unconfigured --bind lan --port "${OPENCLAW_GATEWAY_PORT:-8080}"
+export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-8080}"
+
+# Run gateway as non-root so brew-based onboarding installs are supported.
+if [ "$(id -u)" -eq 0 ]; then
+  chown -R node:node "$OPENCLAW_STATE_DIR" "$OPENCLAW_WORKSPACE_DIR" "$OPENCLAW_PLUGIN_STAGE_DIR"
+  exec su -s /bin/sh node -c 'exec node /app/openclaw.mjs gateway --allow-unconfigured --bind lan --port "$OPENCLAW_GATEWAY_PORT"'
+fi
+
+exec node /app/openclaw.mjs gateway --allow-unconfigured --bind lan --port "$OPENCLAW_GATEWAY_PORT"
 EOF
 RUN chmod +x /usr/local/bin/start-railway.sh
 
