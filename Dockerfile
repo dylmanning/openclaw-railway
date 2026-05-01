@@ -32,11 +32,15 @@ ARG OPENCLAW_INSTALL_BREW="1"
 RUN if [ -n "$OPENCLAW_INSTALL_BREW" ]; then \
   apt-get update && \
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential procps curl file git ca-certificates && \
-  su -s /bin/sh node -c 'git clone --depth=1 https://github.com/Homebrew/brew /home/node/.linuxbrew/Homebrew && mkdir -p /home/node/.linuxbrew/bin && ln -sf ../Homebrew/bin/brew /home/node/.linuxbrew/bin/brew && /home/node/.linuxbrew/bin/brew update --force --quiet' && \
+  mkdir -p /home/node/.linuxbrew /home/node/.cache/Homebrew && \
+  chown -R node:node /home/node/.linuxbrew /home/node/.cache && \
+  su -s /bin/sh node -c 'set -eu; export HOME=/home/node; if [ ! -d /home/node/.linuxbrew/Homebrew/.git ]; then git clone --depth=1 https://github.com/Homebrew/brew /home/node/.linuxbrew/Homebrew; fi; mkdir -p /home/node/.linuxbrew/bin; ln -sf ../Homebrew/bin/brew /home/node/.linuxbrew/bin/brew' && \
   apt-get clean && \
   rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
   fi
-ENV PATH=/home/node/.linuxbrew/bin:/home/node/.linuxbrew/sbin:$PATH
+ENV OPENCLAW_BREW_PREFIX=/data/.linuxbrew
+ENV HOMEBREW_CACHE=/data/.cache/Homebrew
+ENV PATH=/data/.linuxbrew/bin:/data/.linuxbrew/sbin:/home/node/.linuxbrew/bin:/home/node/.linuxbrew/sbin:$PATH
 ENV HOMEBREW_NO_AUTO_UPDATE=1
 ENV HOMEBREW_NO_ANALYTICS=1
 
@@ -85,6 +89,31 @@ COPY <<'EOF' /usr/local/bin/start-railway.sh
 set -eu
 
 mkdir -p "$OPENCLAW_STATE_DIR" "$OPENCLAW_WORKSPACE_DIR" "$OPENCLAW_PLUGIN_STAGE_DIR" "$TAILSCALE_STATE_DIR" /var/run/tailscale
+
+# Keep Homebrew prefix/cache on /data so runtime installs survive container replacement.
+if [ -d /home/node/.linuxbrew/Homebrew/.git ] || [ -n "${OPENCLAW_INSTALL_BREW:-}" ]; then
+  BREW_PREFIX="${OPENCLAW_BREW_PREFIX:-/data/.linuxbrew}"
+  BREW_CACHE="${HOMEBREW_CACHE:-/data/.cache/Homebrew}"
+  BREW_CACHE_ROOT="$(dirname "$BREW_CACHE")"
+
+  mkdir -p "$BREW_PREFIX" "$BREW_CACHE"
+  if [ "$(id -u)" -eq 0 ]; then
+    chown -R node:node "$BREW_PREFIX" "$BREW_CACHE_ROOT"
+  fi
+
+  if [ ! -x "$BREW_PREFIX/bin/brew" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+      if [ -d /home/node/.linuxbrew/Homebrew/.git ]; then
+        su -s /bin/sh node -c "set -eu; rm -rf \"$BREW_PREFIX/Homebrew\"; cp -a /home/node/.linuxbrew/Homebrew \"$BREW_PREFIX/Homebrew\"; mkdir -p \"$BREW_PREFIX/bin\"; ln -sf ../Homebrew/bin/brew \"$BREW_PREFIX/bin/brew\""
+      else
+        su -s /bin/sh node -c "set -eu; export HOME=/home/node; rm -rf \"$BREW_PREFIX/Homebrew\"; git clone --depth=1 https://github.com/Homebrew/brew \"$BREW_PREFIX/Homebrew\"; mkdir -p \"$BREW_PREFIX/bin\"; ln -sf ../Homebrew/bin/brew \"$BREW_PREFIX/bin/brew\""
+      fi
+    fi
+  fi
+
+  export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
+  export HOMEBREW_CACHE="$BREW_CACHE"
+fi
 
 # Start tailscaled in userspace mode when available.
 if command -v tailscaled >/dev/null 2>&1; then
