@@ -11,6 +11,21 @@ RUN if [ "$OPENCLAW_INSTALL_TAILSCALE" = "1" ]; then \
   curl -fsSL https://tailscale.com/install.sh | sh; \
   fi
 
+# Optional: bake Chromium + Xvfb into the image for browser automation (Playwright).
+# Adds ~300MB but eliminates the 60-90s browser install on every container start.
+# Enable with: --build-arg OPENCLAW_INSTALL_BROWSER=1
+ARG OPENCLAW_INSTALL_BROWSER=""
+RUN if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
+  apt-get update && \
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb && \
+  mkdir -p /home/node/.cache/ms-playwright && \
+  PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
+  node /app/node_modules/playwright-core/cli.js install --with-deps chromium && \
+  chown -R node:node /home/node/.cache/ms-playwright && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+  fi
+
 # Optional system packages to bake at build time.
 # Example: --build-arg OPENCLAW_DOCKER_APT_PACKAGES="ffmpeg jq"
 ARG OPENCLAW_DOCKER_APT_PACKAGES=""
@@ -27,7 +42,6 @@ RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
 # --build-arg OPENCLAW_GOPLACES_URL=https://github.com/steipete/goplaces/releases/download/vX.Y.Z/goplaces_X.Y.Z_linux_amd64.tar.gz
 ARG OPENCLAW_GOGCLI_URL="https://github.com/steipete/gogcli/releases/download/v0.14.0/gogcli_0.14.0_linux_amd64.tar.gz"
 ARG OPENCLAW_GOPLACES_URL="https://github.com/steipete/goplaces/releases/download/v0.3.0/goplaces_0.3.0_linux_amd64.tar.gz"
-ARG OPENCLAW_WACLI_URL=""
 RUN set -eu; \
   if [ -n "$OPENCLAW_GOGCLI_URL" ]; then \
   curl -fsSL "$OPENCLAW_GOGCLI_URL" | tar -xzO gog > /usr/local/bin/gog; \
